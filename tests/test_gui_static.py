@@ -87,6 +87,16 @@ class TestRequiredMethods:
     def test_get_combo_name(self):
         assert "_get_combo_name" in self.methods
 
+    def test_verify_methods(self):
+        assert "_on_verify_done" in self.methods
+        assert "_populate_verify_tree" in self.methods
+
+    def test_type_toggle_methods(self):
+        assert "_toggle_source_type" in self.methods
+        assert "_toggle_target_type" in self.methods
+        assert "_toggle_type" in self.methods
+        assert "_refresh_type_display" in self.methods
+
 
 class TestRequiredWidgets:
     @classmethod
@@ -105,6 +115,8 @@ class TestRequiredWidgets:
         assert "btn_scan_tgt" in self.attrs
         assert "btn_compare" in self.attrs
         assert "btn_backup" in self.attrs
+        assert "btn_toggle_src" in self.attrs
+        assert "btn_toggle_tgt" in self.attrs
 
     def test_combo_widgets(self):
         assert "src_snap_combo" in self.attrs
@@ -121,6 +133,8 @@ class TestRequiredWidgets:
         assert "_source_scanned" in self.attrs
         assert "_target_scanned" in self.attrs
         assert "_diff_result" in self.attrs
+        assert "_source_type_var" in self.attrs
+        assert "_target_type_var" in self.attrs
 
 
 class TestThreadingPatterns:
@@ -170,3 +184,23 @@ class TestKeyboardShortcuts:
 
     def test_shortcuts_called_from_build_ui(self):
         assert "self._bind_shortcuts()" in self.source
+
+
+class TestSourcePatterns:
+    """Verify source-level patterns required for post-backup verification."""
+
+    @classmethod
+    def setup_class(cls):
+        with open(GUI_PATH, "r", encoding="utf-8") as f:
+            cls.source = f.read()
+
+    def test_verification_flow_present(self):
+        assert "Verifying target" in self.source
+        assert "_on_verify_done" in self.source
+        assert "_populate_verify_tree" in self.source
+
+    def test_type_toggle_confirmation_present(self):
+        """Source->Target toggle must include askyesno confirmation."""
+        assert "askyesno" in self.source
+        assert '"Source"' in self.source
+        assert '"Target"' in self.source

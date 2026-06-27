@@ -120,3 +120,28 @@ class TestSyncer:
         assert 'copied' in stats
         assert 'skipped' in stats
         assert 'errors' in stats
+
+    def test_dry_run_does_not_write(self, tmp_path):
+        src = tmp_path / 'src'
+        tgt = tmp_path / 'tgt'
+        src.mkdir()
+        tgt.mkdir()
+        (src / 'new.txt').write_text('hello', encoding='utf-8')
+        diff = Differ.compare({'new.txt': 'h1'}, {})
+        syncer = Syncer(dry_run=True)
+        stats = syncer.sync(str(src), str(tgt), diff)
+        assert stats['copied'] == 1
+        assert stats['errors'] == 0
+        assert not (tgt / 'new.txt').exists(), "dry-run should not create files"
+
+    def test_failed_files_in_stats(self, tmp_path):
+        src = tmp_path / 'src'
+        tgt = tmp_path / 'tgt'
+        src.mkdir()
+        tgt.mkdir()
+        diff = DiffResult(added=['ghost.txt'])
+        syncer = Syncer()
+        stats = syncer.sync(str(src), str(tgt), diff)
+        assert stats['errors'] == 1
+        assert len(stats['failed']) == 1
+        assert stats['failed'][0][0] == 'ghost.txt'

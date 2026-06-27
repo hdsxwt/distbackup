@@ -101,3 +101,36 @@ class TestFullWorkflow:
         assert 'target_only.txt' in diff.removed
         Syncer().sync(src, tgt, diff)
         assert os.path.isfile(extra_path)
+
+    def test_post_backup_verification_passes(self, sample_tree, tmp_path):
+        """After a full sync, re-scanning the target should show zero diffs."""
+        src = str(sample_tree)
+        tgt = str(tmp_path / 'target')
+        os.makedirs(tgt, exist_ok=True)
+
+        src_files = Scanner.scan(src)
+        SnapshotManager(src).save('src', src_files, src)
+        Syncer().sync(src, tgt, Differ.compare(src_files, {}))
+
+        # Verify: re-scan target and compare against source
+        tgt_files = Scanner.scan(tgt)
+        verify = Differ.compare(src_files, tgt_files)
+        assert verify.total_changes == 0
+        assert verify.added == []
+        assert verify.modified == []
+
+    def test_post_backup_verification_detects_missing(self, sample_tree, tmp_path):
+        """If a sync leaves a file behind, verification should catch it."""
+        src = str(sample_tree)
+        tgt = str(tmp_path / 'target')
+        os.makedirs(tgt, exist_ok=True)
+
+        src_files = Scanner.scan(src)
+        # Only sync a subset by crafting a partial diff
+        partial_files = dict(list(src_files.items())[:3])
+        Syncer().sync(src, tgt, Differ.compare(partial_files, {}))
+
+        # Full source should still have more files
+        tgt_files = Scanner.scan(tgt)
+        verify = Differ.compare(src_files, tgt_files)
+        assert verify.total_changes > 0

@@ -74,3 +74,40 @@ class TestSnapshotManager:
             f.write("not valid json {{{")
         with pytest.raises(ValueError):
             mgr.load("bad")
+
+
+class TestRepoType:
+    """Tests for the .backup/config.json repo-type feature."""
+
+    def test_default_type_is_target(self, tmp_path):
+        mgr = SnapshotManager(str(tmp_path))
+        assert mgr.get_repo_type() == "Target"
+        config_path = os.path.join(str(tmp_path), ".backup", "config.json")
+        assert os.path.isfile(config_path)
+
+    def test_set_and_get_type(self, tmp_path):
+        mgr = SnapshotManager(str(tmp_path))
+        mgr.set_repo_type("Source")
+        assert mgr.get_repo_type() == "Source"
+        mgr.set_repo_type("Target")
+        assert mgr.get_repo_type() == "Target"
+
+    def test_type_persists_across_instances(self, tmp_path):
+        mgr1 = SnapshotManager(str(tmp_path))
+        mgr1.set_repo_type("Source")
+        mgr2 = SnapshotManager(str(tmp_path))
+        assert mgr2.get_repo_type() == "Source"
+
+    def test_invalid_type_raises(self, tmp_path):
+        mgr = SnapshotManager(str(tmp_path))
+        with pytest.raises(ValueError):
+            mgr.set_repo_type("Invalid")
+        # existing type unchanged
+        assert mgr.get_repo_type() == "Target"
+
+    def test_config_not_overwritten_by_save(self, tmp_path):
+        """Saving a snapshot must not clobber the config.json file."""
+        mgr = SnapshotManager(str(tmp_path))
+        mgr.set_repo_type("Source")
+        mgr.save("snap1", {"a.txt": "abc"}, str(tmp_path))
+        assert mgr.get_repo_type() == "Source"
