@@ -147,3 +147,26 @@ class TestTkinterSafety:
         with open(GUI_PATH, "r", encoding="utf-8") as f:
             source = f.read()
         assert "tk.DISABLED" in source
+
+
+class TestKeyboardShortcuts:
+    @classmethod
+    def setup_class(cls):
+        with open(GUI_PATH, "r", encoding="utf-8") as f:
+            cls.source = f.read()
+
+    def test_bind_shortcuts_method_exists(self):
+        tree = _parse_gui()
+        cls_node = _find_class(tree, "BackupGUI")
+        methods = _class_method_names(cls_node)
+        assert "_bind_shortcuts" in methods
+
+    def test_all_shortcut_sequences_present(self):
+        assert "<Control-o>" in self.source
+        assert "<Control-Shift-O>" in self.source
+        assert "<Control-r>" in self.source
+        assert "<Control-q>" in self.source
+        assert "<Control-w>" in self.source
+
+    def test_shortcuts_called_from_build_ui(self):
+        assert "self._bind_shortcuts()" in self.source

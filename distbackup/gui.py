@@ -125,9 +125,19 @@ class BackupGUI:
         self.btn_backup.pack(pady=(4, 8))
         self.btn_backup.configure(state=tk.DISABLED)
 
+        self._bind_shortcuts()
+
     # ------------------------------------------------------------------
     # Folder selection (with auto-load of latest snapshot)
     # ------------------------------------------------------------------
+
+    def _bind_shortcuts(self):
+        """Register keyboard shortcuts on the root window."""
+        self.root.bind("<Control-o>", lambda e: (self._browse_source(), "break")[1])
+        self.root.bind("<Control-Shift-O>", lambda e: (self._browse_target(), "break")[1])
+        self.root.bind("<Control-r>", lambda e: (self._refresh_snapshot_lists(), "break")[1])
+        self.root.bind("<Control-q>", lambda e: (self.root.destroy(), "break")[1])
+        self.root.bind("<Control-w>", lambda e: (self.root.destroy(), "break")[1])
 
     def _browse_source(self):
         path = filedialog.askdirectory(title="Select Source Folder")
