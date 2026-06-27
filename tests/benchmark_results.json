@@ -1,0 +1,42 @@
+{
+  "scan_1000_deep": {
+    "elapsed": 8.3959,
+    "threshold": 15.0,
+    "passed": true
+  },
+  "hash_100mb": {
+    "elapsed": 0.0621,
+    "threshold": 5.0,
+    "passed": true
+  },
+  "compare_10000": {
+    "elapsed": 0.0059,
+    "threshold": 1.0,
+    "passed": true
+  },
+  "snapshot_10000": {
+    "elapsed": 0.0325,
+    "threshold": 3.0,
+    "passed": true
+  },
+  "sync_500": {
+    "elapsed": 0.2817,
+    "threshold": 10.0,
+    "passed": true
+  },
+  "incremental_diff_5000": {
+    "elapsed": 0.0025,
+    "threshold": 0.5,
+    "passed": true
+  },
+  "scan_1000_flat": {
+    "elapsed": 8.9913,
+    "threshold": 10.0,
+    "passed": true
+  },
+  "hash_5000_small": {
+    "elapsed": 39.9324,
+    "threshold": 30.0,
+    "passed": false
+  }
+}
