@@ -1,0 +1,3 @@
+interface:
+  display_name: "PowerShell File Encoding"
+  short_description: "Safely write files with special characters, markdown, and Unicode from PowerShell on Windows"
