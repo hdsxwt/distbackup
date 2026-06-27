@@ -1,0 +1,13 @@
+[project]
+name = "distbackup"
+version = "1.0.0"
+description = "Distributed backup tool with SHA256 hash comparison and tkinter GUI"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+[project.scripts]
+distbackup = "distbackup.__main__:main"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
