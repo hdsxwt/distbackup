@@ -1,4 +1,4 @@
-﻿# distbackup
+# distbackup
 
 A content-addressable backup tool that detects file changes by SHA256 hash
 comparison, enforces repository type safety, and syncs directories one-way
@@ -28,6 +28,21 @@ Each directory tracked by distbackup carries a type in `.backup/config.json`:
 A directory marked as **Source** is protected: it can never receive writes
 from a sync operation. This prevents accidentally overwriting your origin
 of truth. Toggle the type in the GUI or with the CLI.
+
+## Repository identity
+
+When a repository is marked as **Source**, distbackup assigns it a unique
+identity code (UUIDv4) stored as `repo_id` in `.backup/config.json`. This
+code represents the repository lineage.
+
+During a backup:
+- If the target has no `repo_id` yet, the sync proceeds and the target
+  inherits the source's identity code.
+- If the target already carries the same `repo_id` as the source, the sync
+  proceeds normally (same lineage).
+- If the target carries a **different** `repo_id`, the backup is **rejected**.
+  This prevents accidentally mixing files from unrelated source repositories
+  into the same target directory.
 
 ## Quick start
 
@@ -65,7 +80,7 @@ python -m distbackup cli list --store D:\my-data
 ```
 root-folder/
   .backup/                  # Automatically hidden on Windows
-    config.json             # {"type": "Target"} or {"type": "Source"}
+    config.json             # {"type": "Target"}  or  {"type": "Source", "repo_id": "uuid"}
     snapshots/              # Timestamp-named JSON snapshots (atomic writes)
       20260627_113025.json
       20260627_114201.json
@@ -78,6 +93,21 @@ Each snapshot records:
 
 Snapshots are written atomically (temp file + `os.replace`) so a crash
 cannot leave a truncated JSON behind.
+
+## Security
+
+- **Path traversal protection** -- before copying any file, the sync engine
+  validates that the resolved destination path stays within the target
+  directory. Tampered snapshots containing `..` escape sequences are blocked.
+- **Snapshot root validation** -- each snapshot records its origin directory.
+  Before a sync, both snapshots are checked to ensure they match the
+  directories being operated on.
+- **Scanner transparency** -- unreadable files are logged as warnings instead
+  of being silently skipped, so you know exactly what was omitted from a scan.
+- **Source write protection** -- directories marked as Source reject all
+  incoming sync writes.
+- **Lineage enforcement** -- a backup is blocked if source and target carry
+  different repo identity codes (see Repository identity above).
 
 ## Skipped paths
 
@@ -95,11 +125,14 @@ directories to avoid hashing gigabytes of irrelevant files:
    button.
 2. **Toggle** the repo type (Source / Target). Changing from Source to
    Target requires a confirmation dialog since it removes write protection.
+   Setting a directory to Source also assigns it a unique identity code.
 3. **Scan** (optional) to create a fresh timestamp-named snapshot.
 4. The snapshot combo box shows available snapshots, with a `(new)` marker
    on the latest one. Select any snapshot from the dropdown to load it.
 5. Click **Compare** to see the diff in a tree view.
 6. Click **Start Backup** to sync. Safety checks include:
+   - Lineage enforcement (blocks backups across unrelated repos)
+   - Snapshot root validation (ensures snapshots match directories)
    - Target type enforcement (blocks writes to Source repos)
    - Stale-snapshot warnings
    - Unscanned-folder warnings
@@ -122,10 +155,10 @@ directories to avoid hashing gigabytes of irrelevant files:
 | Module | Role |
 |--------|------|
 | `hashing` | `hash_file()` and `hash_bytes()` -- SHA256 hashing. |
-| `Scanner` | Walks a directory tree and returns `{relpath: hash}`. Skips tooling dirs. |
-| `SnapshotManager` | Saves/loads timestamp-named JSON snapshots (atomic writes). Manages repo type via `config.json`. Hides `.backup/`. |
+| `Scanner` | Walks a directory tree and returns `{relpath: hash}`. Skips tooling dirs. Logs warnings for unreadable files. |
+| `SnapshotManager` | Saves/loads timestamp-named JSON snapshots (atomic writes). Manages repo type and identity code via `config.json`. Validates snapshot roots. Hides `.backup/`. |
 | `Differ` | Compares two `{path: hash}` maps -> added / modified / removed / unchanged. |
-| `Syncer` | Copies added and modified files from source to target. Supports dry-run. Never deletes. Tracks per-file errors. |
+| `Syncer` | Copies added and modified files from source to target. Blocks path traversal. Supports dry-run. Never deletes. Tracks per-file errors. |
 | `_win32` | Windows-specific helpers (hide directory, logged errors). |
 
 ## Test data
@@ -139,5 +172,5 @@ testdata/
 ## Requirements
 
 - Python 3.10+
-- Standard library only -- `hashlib`, `os`, `shutil`, `json`, `tkinter`, `argparse`
-- 107 tests, all passing
+- Standard library only -- `hashlib`, `os`, `shutil`, `json`, `tkinter`, `argparse`, `uuid`
+- 145 tests, all passing

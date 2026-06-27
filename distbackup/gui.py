@@ -449,6 +449,20 @@ class BackupGUI:
             self._log("Backup blocked: target is Source type.")
             return
 
+        # --- enforce repo_id lineage ---
+        src_id = src_mgr.ensure_repo_id()
+        tgt_id = tgt_mgr.get_repo_id()
+        if tgt_id is not None and tgt_id != src_id:
+            messagebox.showerror(
+                "Lineage Mismatch",
+                "Source and target repositories have different identity codes.\n\n"
+                f"Source repo_id: {src_id}\n"
+                f"Target repo_id: {tgt_id}\n\n"
+                "Backing up across different repository lineages is not allowed."
+            )
+            self._log("Backup blocked: repo_id lineage mismatch.")
+            return
+
         # Pre-backup safety checks
         warnings = []
         if not self._source_scanned:
@@ -478,6 +492,7 @@ class BackupGUI:
         source_files_copy = dict(self._source_files)
         diff_copy = self._diff_result
         self._diff_result = None
+        inherit_id = (tgt_id is None)
 
         def progress_cb(cur, total):
             self.root.after(0, lambda: self._update_progress(cur, total))
@@ -489,11 +504,17 @@ class BackupGUI:
                 stats = syncer.sync(src, tgt, diff_copy)
                 self.root.after(0, lambda: self._on_backup_done(stats))
 
+                # --- inherit source repo_id to target ---
+                if inherit_id:
+                    tgt_mgr.set_repo_id(src_id)
+                    self.root.after(0, lambda: self._log(
+                        f"Inherited repo_id from source: {src_id}"
+                    ))
+
                 # --- post-backup verification ---
                 self.root.after(0, lambda: self._log("Verifying target ..."))
                 tgt_now = Scanner.scan(tgt)
                 verify = Differ.compare(source_files_copy, tgt_now)
-                # Save fresh scan as timestamped snapshot
                 verify_name = datetime.now().strftime("%Y%m%d_%H%M%S")
                 tgt_mgr.save(verify_name, tgt_now, tgt)
                 self.root.after(0, lambda vn=verify_name: self._on_verify_done(verify, tgt, vn))

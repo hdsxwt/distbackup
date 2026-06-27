@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -18,14 +19,16 @@ class SnapshotManager:
     """Manages named snapshots stored under .backup/snapshots/.
 
     Each .backup directory carries a ``config.json`` that records the
-    repository type:
+    repository type and identity code (repo_id):
 
-    - ``"Source"``: this directory is the origin of truth.  It may never be
-      used as a sync *target* (i.e. data is never written into it).
-    - ``"Target"``: this directory can be used as either a source or a
-      target.
+    - ``type``: ``"Source"`` or ``"Target"``.
+    - ``repo_id``: a UUIDv4 that identifies the repository lineage.
+      Assigned when a repository is marked as Source, then inherited
+      by Target repositories during backup.
 
-    The default type is ``"Target"`` when no config exists yet.
+    New repositories start without a ``repo_id``.  A UUID is generated
+    only when the repository is explicitly set to ``"Source"`` type (or
+    lazily via ``ensure_repo_id`` on the source side of a backup).
     """
 
     def __init__(self, root: str):
@@ -69,10 +72,41 @@ class SnapshotManager:
         return self._read_config().get("type", "Target")
 
     def set_repo_type(self, value: RepoType) -> None:
-        """Set the repository type."""
+        """Set the repository type.  Setting to *Source* also generates a
+        ``repo_id`` if one does not already exist."""
         if value not in ("Source", "Target"):
             raise ValueError(f"Invalid repo type: {value!r}")
-        self._write_config({"type": value})
+        config = self._read_config()
+        config["type"] = value
+        if value == "Source" and "repo_id" not in config:
+            config["repo_id"] = str(uuid.uuid4())
+        self._write_config(config)
+
+    # -- repo identity ---------------------------------------------------
+
+    def get_repo_id(self) -> str | None:
+        """Return the repository identity code, or None if not set."""
+        return self._read_config().get("repo_id")
+
+    def ensure_repo_id(self) -> str:
+        """Return repo_id, auto-generating and persisting one if missing.
+
+        This is used on the source side before a backup to guarantee every
+        source repository carries an identity code.
+        """
+        config = self._read_config()
+        repo_id = config.get("repo_id")
+        if repo_id is None:
+            repo_id = str(uuid.uuid4())
+            config["repo_id"] = repo_id
+            self._write_config(config)
+        return repo_id
+
+    def set_repo_id(self, repo_id: str) -> None:
+        """Set the repository identity code (for lineage inheritance)."""
+        config = self._read_config()
+        config["repo_id"] = repo_id
+        self._write_config(config)
 
     # -- snapshots ------------------------------------------------------
 

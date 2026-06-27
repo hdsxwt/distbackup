@@ -113,6 +113,104 @@ class TestRepoType:
         assert mgr.get_repo_type() == "Source"
 
 
+class TestRepoId:
+    """Tests for repo_id generation, access, and migration."""
+
+    def test_new_repo_has_no_repo_id(self, tmp_path):
+        """New repositories (Target by default) start with no repo_id."""
+        mgr = SnapshotManager(str(tmp_path))
+        assert mgr.get_repo_id() is None
+
+    def test_set_source_generates_repo_id(self, tmp_path):
+        """Marking a repository as Source auto-generates a repo_id."""
+        mgr = SnapshotManager(str(tmp_path))
+        assert mgr.get_repo_id() is None
+        mgr.set_repo_type("Source")
+        rid = mgr.get_repo_id()
+        assert rid is not None
+        assert isinstance(rid, str)
+        assert len(rid) == 36
+
+    def test_repo_id_is_stable_across_instances(self, tmp_path):
+        mgr1 = SnapshotManager(str(tmp_path))
+        mgr1.set_repo_type("Source")
+        rid1 = mgr1.get_repo_id()
+        mgr2 = SnapshotManager(str(tmp_path))
+        assert mgr2.get_repo_id() == rid1
+
+    def test_config_json_no_repo_id_for_new_target(self, tmp_path):
+        """New Target repos have no repo_id in config.json."""
+        mgr = SnapshotManager(str(tmp_path))
+        config_path = os.path.join(str(tmp_path), ".backup", "config.json")
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert "repo_id" not in data
+        assert data["type"] == "Target"
+
+    def test_config_json_has_repo_id_after_source(self, tmp_path):
+        """After set_repo_type("Source"), config.json contains a repo_id."""
+        mgr = SnapshotManager(str(tmp_path))
+        mgr.set_repo_type("Source")
+        config_path = os.path.join(str(tmp_path), ".backup", "config.json")
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert "repo_id" in data
+        assert data["type"] == "Source"
+        assert len(data["repo_id"]) == 36
+
+    def test_different_sources_have_different_ids(self, tmp_path):
+        d1 = str(tmp_path / "repo_a")
+        d2 = str(tmp_path / "repo_b")
+        os.makedirs(d1, exist_ok=True)
+        os.makedirs(d2, exist_ok=True)
+        m1 = SnapshotManager(d1)
+        m2 = SnapshotManager(d2)
+        m1.set_repo_type("Source")
+        m2.set_repo_type("Source")
+        assert m1.get_repo_id() != m2.get_repo_id()
+
+    def test_set_repo_type_preserves_repo_id(self, tmp_path):
+        """Toggling between Source/Target must preserve existing repo_id."""
+        mgr = SnapshotManager(str(tmp_path))
+        mgr.set_repo_type("Source")
+        rid = mgr.get_repo_id()
+        mgr.set_repo_type("Target")
+        assert mgr.get_repo_id() == rid
+        assert mgr.get_repo_type() == "Target"
+        mgr.set_repo_type("Source")
+        assert mgr.get_repo_id() == rid
+        assert mgr.get_repo_type() == "Source"
+
+    def test_set_target_does_not_generate_repo_id(self, tmp_path):
+        """Setting to Target on a fresh repo does not generate a repo_id."""
+        mgr = SnapshotManager(str(tmp_path))
+        mgr.set_repo_type("Target")  # already Target, but idempotent
+        assert mgr.get_repo_id() is None
+
+    def test_set_repo_id_persists(self, tmp_path):
+        mgr = SnapshotManager(str(tmp_path))
+        mgr.set_repo_id("custom-lineage-id")
+        assert mgr.get_repo_id() == "custom-lineage-id"
+        mgr2 = SnapshotManager(str(tmp_path))
+        assert mgr2.get_repo_id() == "custom-lineage-id"
+
+    def test_ensure_repo_id_generates_on_any_repo(self, tmp_path):
+        """ensure_repo_id generates a UUID for a Target repo that lacks one."""
+        mgr = SnapshotManager(str(tmp_path))
+        assert mgr.get_repo_id() is None
+        ensured = mgr.ensure_repo_id()
+        assert ensured is not None
+        assert len(ensured) == 36
+        assert mgr.get_repo_id() == ensured
+
+    def test_ensure_repo_id_idempotent(self, tmp_path):
+        """Calling ensure_repo_id twice returns the same value."""
+        mgr = SnapshotManager(str(tmp_path))
+        first = mgr.ensure_repo_id()
+        second = mgr.ensure_repo_id()
+        assert first == second
+
+
 class TestValidateRoot:
     """Tests for SnapshotManager.validate_root() method."""
 

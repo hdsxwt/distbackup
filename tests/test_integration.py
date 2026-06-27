@@ -154,6 +154,129 @@ from distbackup.core.differ import Differ
 from distbackup.core.syncer import Syncer
 
 
+import json
+import os
+import tempfile
+import pytest
+from distbackup.core.scanner import Scanner
+from distbackup.core.snapshot_manager import SnapshotManager
+from distbackup.core.differ import Differ
+from distbackup.core.syncer import Syncer
+
+
+class TestRepoIdLineage:
+    """Integration tests for repo_id lineage enforcement and inheritance."""
+
+    def _bootstrap_repos(self, src_dir, tgt_dir):
+        """Create a source with files and an empty target, both as SnapshotManager."""
+        os.makedirs(tgt_dir, exist_ok=True)
+        src_mgr = SnapshotManager(src_dir)
+        tgt_mgr = SnapshotManager(tgt_dir)
+        src_files = Scanner.scan(src_dir)
+        tgt_files = Scanner.scan(tgt_dir)
+        src_mgr.save("src_snap", src_files, src_dir)
+        tgt_mgr.save("tgt_snap", tgt_files, tgt_dir)
+        return src_mgr, tgt_mgr, src_files, tgt_files
+
+    def test_first_backup_inherits_repo_id(self, sample_tree, tmp_path):
+        """A first-time backup (target has no lineage) inherits source repo_id."""
+        src = str(sample_tree)
+        tgt = str(tmp_path / "target")
+        src_mgr, tgt_mgr, src_files, tgt_files = self._bootstrap_repos(src, tgt)
+
+        # Ensure source has a repo_id; new Target repos start without one
+        src_id = src_mgr.ensure_repo_id()
+        assert tgt_mgr.get_repo_id() is None
+        # New Target repos start with no repo_id
+        assert tgt_mgr.get_repo_id() is None
+
+        diff = Differ.compare(src_files, tgt_files)
+        Syncer().sync(src, tgt, diff)
+
+        # After backup: source inherits repo_id to target
+        tgt_mgr.set_repo_id(src_id)  # simulate what CLI/GUI do
+        assert tgt_mgr.get_repo_id() == src_id
+
+    def test_matching_repo_ids_allow_backup(self, sample_tree, tmp_path):
+        """Backup succeeds when source and target have the same repo_id."""
+        src = str(sample_tree)
+        tgt = str(tmp_path / "target")
+        src_mgr, tgt_mgr, src_files, tgt_files = self._bootstrap_repos(src, tgt)
+
+        # Set both to the same id (simulated inherited scenario)
+        lineage_id = src_mgr.ensure_repo_id()
+        tgt_mgr.set_repo_id(lineage_id)
+
+        assert src_mgr.get_repo_id() == tgt_mgr.get_repo_id()
+        diff = Differ.compare(src_files, tgt_files)
+        stats = Syncer().sync(src, tgt, diff)
+        assert stats["copied"] > 0
+
+    def test_mismatched_repo_ids_are_detected(self, sample_tree, tmp_path):
+        """Backup should be blocked when repo_ids differ."""
+        src = str(sample_tree)
+        tgt = str(tmp_path / "target")
+        src_mgr, tgt_mgr, src_files, tgt_files = self._bootstrap_repos(src, tgt)
+
+        # Force different repo_ids
+        src_id = src_mgr.ensure_repo_id()
+        tgt_mgr.set_repo_id("totally-different-lineage-id")
+        assert src_mgr.get_repo_id() != tgt_mgr.get_repo_id()
+
+        # The sync itself won't block, but the caller (CLI/GUI) should check
+        src_id_check = src_mgr.ensure_repo_id()
+        tgt_id_check = tgt_mgr.get_repo_id()
+        assert tgt_id_check is not None
+        assert tgt_id_check != src_id_check
+
+        # Simulate the check that CLI/GUI performs
+        if tgt_id_check is not None and tgt_id_check != src_id_check:
+            blocked = True
+        else:
+            blocked = False
+        assert blocked
+
+    def test_ensure_repo_id_does_not_overwrite_existing(self, sample_tree):
+        """Calling ensure_repo_id on a repo that already has one is idempotent."""
+        src = str(sample_tree)
+        mgr = SnapshotManager(src)
+        first = mgr.ensure_repo_id()
+        second = mgr.ensure_repo_id()
+        assert first == second
+
+    def test_legacy_target_gets_source_id_on_first_backup(self, sample_tree, tmp_path):
+        """End-to-end: legacy target without repo_id inherits source id after backup."""
+        src = str(sample_tree)
+        tgt = str(tmp_path / "target")
+        os.makedirs(tgt, exist_ok=True)
+
+        src_mgr = SnapshotManager(src)
+        tgt_mgr = SnapshotManager(tgt)
+        src_files = Scanner.scan(src)
+        tgt_files = Scanner.scan(tgt)
+        src_mgr.save("src_snap", src_files, src)
+        tgt_mgr.save("tgt_snap", tgt_files, tgt)
+
+        # New Target repos have no repo_id; source gets one via ensure
+        src_id = src_mgr.ensure_repo_id()
+        assert tgt_mgr.get_repo_id() is None
+        assert src_mgr.get_repo_id() == src_id
+
+        # Perform lineage check (should pass: tgt_id is None)
+        tgt_id = tgt_mgr.get_repo_id()
+        src_id_check = src_mgr.ensure_repo_id()
+        blocked = (tgt_id is not None and tgt_id != src_id_check)
+        assert not blocked
+
+        # Run backup
+        diff = Differ.compare(src_files, tgt_files)
+        Syncer().sync(src, tgt, diff)
+
+        # Inherit
+        tgt_mgr.set_repo_id(src_id)
+        assert tgt_mgr.get_repo_id() == src_id
+
+
 class TestSecurityProtection:
     """Integration tests for the three security fixes."""
 

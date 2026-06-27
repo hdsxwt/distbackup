@@ -52,6 +52,17 @@ def cmd_sync(args):
         print(f"       Use 'distbackup type {args.target} Target' to change it.")
         return
 
+    # -- enforce repo_id lineage --
+    src_mgr = SnapshotManager(args.source)
+    src_id = src_mgr.ensure_repo_id()
+    tgt_id = tgt_mgr.get_repo_id()
+    if tgt_id is not None and tgt_id != src_id:
+        print("ERROR: Source and target repositories have different identity codes.")
+        print(f"       Source repo_id: {src_id}")
+        print(f"       Target repo_id: {tgt_id}")
+        print("       Backing up across different repository lineages is not allowed.")
+        return
+
     result = Differ.compare(snap_src["files"], snap_tgt["files"])
 
     print(f"Files to add:    {len(result.added)}")
@@ -87,6 +98,11 @@ def cmd_sync(args):
         print(msg)
         for relpath, err in stats["failed"]:
             print(f"  FAILED: {relpath}  ({err})")
+
+        # --- inherit source repo_id to target ---
+        if tgt_id is None:
+            tgt_mgr.set_repo_id(src_id)
+            print(f"Inherited repo_id from source: {src_id}")
 
         # --- post-backup verification ---
         print()
