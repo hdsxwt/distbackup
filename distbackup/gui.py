@@ -320,6 +320,7 @@ class BackupGUI:
         self._mark_combo("target", name)
         self._refresh_type_display("target")
         self._log(f"Loaded target snapshot '{name}': {len(snap['files'])} files ({snap['created']})")
+
     def _mark_combo(self, side: str, name: str):
         """Set combo display, adding (new) only if this is the latest snapshot."""
         entry = self.src_entry if side == "source" else self.tgt_entry
@@ -332,8 +333,6 @@ class BackupGUI:
                 combo.set(f"{name} (new)")
             else:
                 combo.set(name)
-
-
 
     def _get_combo_name(self, side: str) -> str:
         """Get the raw snapshot name currently shown in the combo (without (new))."""
@@ -422,8 +421,25 @@ class BackupGUI:
         if not self._diff_result or self._diff_result.total_changes == 0:
             return
 
-        # --- enforce target repo type ---
+        # --- validate snapshot roots match directories ---
+        src_mgr = SnapshotManager(src)
         tgt_mgr = SnapshotManager(tgt)
+        src_snap_name = self._get_combo_name("source")
+        tgt_snap_name = self._get_combo_name("target")
+        try:
+            src_mgr.validate_root(src_snap_name, src)
+        except ValueError as e:
+            messagebox.showerror("Snapshot Mismatch", str(e))
+            self._log(f"Backup blocked: {e}")
+            return
+        try:
+            tgt_mgr.validate_root(tgt_snap_name, tgt)
+        except ValueError as e:
+            messagebox.showerror("Snapshot Mismatch", str(e))
+            self._log(f"Backup blocked: {e}")
+            return
+
+        # --- enforce target repo type ---
         if tgt_mgr.get_repo_type() == "Source":
             messagebox.showerror(
                 "Blocked",

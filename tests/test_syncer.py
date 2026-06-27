@@ -145,3 +145,115 @@ class TestSyncer:
         assert stats['errors'] == 1
         assert len(stats['failed']) == 1
         assert stats['failed'][0][0] == 'ghost.txt'
+
+
+import os
+import json
+import pytest
+from distbackup.core.syncer import Syncer, _is_safe_target
+from distbackup.core.differ import Differ, DiffResult
+
+
+import os
+import json
+import pytest
+from distbackup.core.syncer import Syncer, _is_safe_target
+from distbackup.core.differ import Differ, DiffResult
+
+
+class TestPathTraversalProtection:
+    """Tests for _is_safe_target and Syncer path traversal blocking."""
+
+    def test_simple_safe_path(self, tmp_path):
+        target = str(tmp_path / "target")
+        os.makedirs(target, exist_ok=True)
+        assert _is_safe_target(target, os.path.join(target, "file.txt"))
+
+    def test_parent_directory_traversal_blocked(self, tmp_path):
+        target = str(tmp_path / "target")
+        os.makedirs(target, exist_ok=True)
+        assert not _is_safe_target(target, os.path.join(target, "..", "escape.txt"))
+
+    def test_double_parent_traversal_blocked(self, tmp_path):
+        target = str(tmp_path / "target")
+        os.makedirs(target, exist_ok=True)
+        assert not _is_safe_target(target, os.path.join(target, "..", "..", "etc", "passwd"))
+
+    def test_absolute_path_blocked(self, tmp_path):
+        target = str(tmp_path / "target")
+        os.makedirs(target, exist_ok=True)
+        assert not _is_safe_target(target, os.path.join(target, "..", "other"))
+
+    def test_syncer_blocks_traversal_in_added(self, tmp_path):
+        """Syncer should block added files with traversal paths."""
+        src = str(tmp_path / "src")
+        tgt = str(tmp_path / "tgt")
+        os.makedirs(src, exist_ok=True)
+        os.makedirs(tgt, exist_ok=True)
+        # Create the legitimate file so it doesnt cause a second error
+        (tmp_path / "src" / "escape.txt").write_text("data", encoding="utf-8")
+
+        diff = DiffResult(added=["..", "escape.txt"])
+        syncer = Syncer()
+        stats = syncer.sync(src, tgt, diff)
+        assert stats["errors"] >= 1
+        assert any("path traversal blocked" in err for _, err in stats["failed"])
+
+    def test_syncer_blocks_traversal_in_modified(self, tmp_path):
+        """Syncer should block modified files with traversal paths."""
+        src = str(tmp_path / "src")
+        tgt = str(tmp_path / "tgt")
+        os.makedirs(src, exist_ok=True)
+        os.makedirs(tgt, exist_ok=True)
+        (tmp_path / "src" / "sneaky.dll").write_text("dll", encoding="utf-8")
+
+        diff = DiffResult(modified=[os.pardir, os.pardir, "sneaky.dll"])
+        syncer = Syncer()
+        stats = syncer.sync(src, tgt, diff)
+        # Both ".." entries and ".." should be blocked (each is a separate list item)
+        assert stats["errors"] >= 1
+        assert stats["copied"] == 1  # sneaky.dll is safe
+
+    def test_syncer_blocks_mixed_safe_and_unsafe(self, tmp_path):
+        """Safe files still get copied alongside blocked traversals."""
+        src = str(tmp_path / "src")
+        tgt = str(tmp_path / "tgt")
+        os.makedirs(src, exist_ok=True)
+        os.makedirs(tgt, exist_ok=True)
+        (tmp_path / "src" / "good.txt").write_text("hello", encoding="utf-8")
+
+        diff = DiffResult(added=["good.txt", "..", "hack.exe"])
+        syncer = Syncer()
+        stats = syncer.sync(src, tgt, diff)
+        assert stats["copied"] == 1
+        assert stats["errors"] >= 1
+        assert os.path.exists(os.path.join(tgt, "good.txt"))
+
+    def test_dry_run_also_blocks_traversal(self, tmp_path):
+        """Dry-run mode should also detect and block path traversal."""
+        src = str(tmp_path / "src")
+        tgt = str(tmp_path / "tgt")
+        os.makedirs(src, exist_ok=True)
+        os.makedirs(tgt, exist_ok=True)
+
+        diff = DiffResult(added=["..", "evil.sh"])
+        syncer = Syncer(dry_run=True)
+        stats = syncer.sync(src, tgt, diff)
+        assert stats["errors"] >= 1
+        assert any("path traversal blocked" in err for _, err in stats["failed"])
+
+    def test_tampered_snapshot_path_is_blocked(self, tmp_path):
+        """Simulate a tampered snapshot JSON with traversal paths."""
+        src = str(tmp_path / "src")
+        tgt = str(tmp_path / "tgt")
+        os.makedirs(src, exist_ok=True)
+        os.makedirs(tgt, exist_ok=True)
+
+        # Simulate a diff created from a tampered snapshot
+        diff = DiffResult(added=[
+            os.path.join("..", "..", "..", "..", "Windows", "System32", "malware.dll"),
+        ])
+        syncer = Syncer()
+        stats = syncer.sync(src, tgt, diff)
+        assert stats["errors"] == 1
+        assert stats["copied"] == 0

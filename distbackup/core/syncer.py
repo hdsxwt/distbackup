@@ -10,6 +10,17 @@ from .differ import DiffResult
 logger = logging.getLogger(__name__)
 
 
+def _is_safe_target(target_dir: str, dst_path: str) -> bool:
+    """Return True if *dst_path* resolves inside *target_dir*."""
+    target_abs = os.path.abspath(target_dir)
+    dst_abs = os.path.abspath(dst_path)
+    try:
+        common = os.path.commonpath([target_abs, dst_abs])
+    except ValueError:
+        return False
+    return os.path.normcase(common) == os.path.normcase(target_abs)
+
+
 class Syncer:
     """Applies a diff by copying files from source to target.
 
@@ -51,6 +62,12 @@ class Syncer:
         for idx, relpath in enumerate(to_copy):
             src = os.path.join(source_dir, relpath)
             dst = os.path.join(target_dir, relpath)
+
+            if not _is_safe_target(target_dir, dst):
+                stats["errors"] += 1
+                stats["failed"].append((relpath, "path traversal blocked"))
+                logger.warning("Blocked path traversal: %s -> %s", relpath, dst)
+                continue
 
             try:
                 if self._dry_run:

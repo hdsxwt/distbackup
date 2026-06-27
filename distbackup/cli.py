@@ -41,8 +41,12 @@ def cmd_sync(args):
     snap_src = mgr.load(args.source_snap)
     snap_tgt = mgr.load(args.target_snap)
 
-    # -- enforce target repo type --
+    # -- validate snapshot roots match directories --
+    mgr.validate_root(args.source_snap, args.source)
     tgt_mgr = SnapshotManager(args.target)
+    tgt_mgr.validate_root(args.target_snap, args.target)
+
+    # -- enforce target repo type --
     if tgt_mgr.get_repo_type() == "Source":
         print("ERROR: Target directory is marked as 'Source' and cannot receive writes.")
         print(f"       Use 'distbackup type {args.target} Target' to change it.")

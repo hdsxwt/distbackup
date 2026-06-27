@@ -111,3 +111,49 @@ class TestRepoType:
         mgr.set_repo_type("Source")
         mgr.save("snap1", {"a.txt": "abc"}, str(tmp_path))
         assert mgr.get_repo_type() == "Source"
+
+
+class TestValidateRoot:
+    """Tests for SnapshotManager.validate_root() method."""
+
+    def test_matching_root_passes(self, tmp_path):
+        mgr = SnapshotManager(str(tmp_path))
+        mgr.save("snap1", {"a.txt": "abc123"}, str(tmp_path))
+        # Should not raise
+        mgr.validate_root("snap1", str(tmp_path))
+
+    def test_mismatched_root_raises(self, tmp_path):
+        mgr = SnapshotManager(str(tmp_path))
+        mgr.save("snap1", {"a.txt": "abc123"}, str(tmp_path))
+        other = str(tmp_path / "other_dir")
+        os.makedirs(other, exist_ok=True)
+        # Temporary SnapshotManager just to load the snapshot
+        with pytest.raises(ValueError, match="root mismatch"):
+            mgr.validate_root("snap1", other)
+
+    def test_root_validated_against_absolute_path(self, tmp_path):
+        """Relative paths should be normalized before comparison."""
+        import os as _os
+        mgr = SnapshotManager(str(tmp_path))
+        mgr.save("snap1", {"f": "h"}, str(tmp_path))
+        # Use a path with a trailing separator or relative form
+        mgr.validate_root("snap1", _os.path.abspath(str(tmp_path)))
+
+    def test_missing_root_field_raises(self, tmp_path):
+        """Snapshot without a root field should fail validation."""
+        mgr = SnapshotManager(str(tmp_path))
+        mgr.save("snap1", {"f": "h"}, str(tmp_path))
+        # Manually corrupt the snapshot to remove root
+        snap_path = os.path.join(str(tmp_path), ".backup", "snapshots", "snap1.json")
+        with open(snap_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        del data["root"]
+        with open(snap_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        with pytest.raises(ValueError):
+            mgr.validate_root("snap1", str(tmp_path))
+
+    def test_validate_root_on_nonexistent_snapshot(self, tmp_path):
+        mgr = SnapshotManager(str(tmp_path))
+        with pytest.raises(FileNotFoundError):
+            mgr.validate_root("nonexistent", str(tmp_path))

@@ -76,3 +76,74 @@ class TestScanner:
         assert ".backup" in SKIP_NAMES
         assert ".git" in SKIP_NAMES
         assert "__pycache__" in SKIP_NAMES
+
+
+import logging
+import pytest
+from distbackup.core.scanner import Scanner
+from distbackup.core.hashing import hash_file
+
+
+class TestScannerLogging:
+    """Tests that Scanner logs warnings when skipping unreadable files."""
+
+    def test_unreadable_file_logged(self, tmp_path, caplog):
+        """A file that cannot be read should produce a warning log."""
+        from unittest.mock import patch
+
+        root = str(tmp_path)
+        # Create a normal file that will force an OSError during hash
+        bad_file = os.path.join(root, "bad_file.txt")
+        with open(bad_file, "w", encoding="utf-8") as f:
+            f.write("some content")
+
+        # Patch hash_file to raise OSError for this specific file
+        original_hash_file = hash_file
+
+        def mock_hash(path, *args, **kwargs):
+            if os.path.abspath(path) == os.path.abspath(bad_file):
+                raise PermissionError("Simulated permission denied")
+            return original_hash_file(path, *args, **kwargs)
+
+        with patch("distbackup.core.scanner.hash_file", side_effect=mock_hash):
+            with caplog.at_level(logging.WARNING):
+                result = Scanner.scan(root)
+
+        # The file should be excluded from results
+        assert "bad_file.txt" not in result
+        # A warning should be logged
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "bad_file.txt" in warnings[0].message
+        assert "Skipping unreadable file" in warnings[0].message
+
+    def test_normal_scan_no_warnings(self, sample_tree, caplog):
+        """Normal scan without unreadable files should not produce warnings."""
+        with caplog.at_level(logging.WARNING):
+            Scanner.scan(str(sample_tree))
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 0
+
+    def test_mixed_readable_and_unreadable(self, tmp_path, caplog):
+        """Readable files still appear when some files are unreadable."""
+        from unittest.mock import patch
+
+        root = str(tmp_path)
+        (tmp_path / "good.txt").write_text("hello", encoding="utf-8")
+        (tmp_path / "bad.txt").write_text("cannot read", encoding="utf-8")
+
+        original_hash_file = hash_file
+
+        def mock_hash(path, *args, **kwargs):
+            if os.path.basename(path) == "bad.txt":
+                raise OSError("Simulated I/O error")
+            return original_hash_file(path, *args, **kwargs)
+
+        with patch("distbackup.core.scanner.hash_file", side_effect=mock_hash):
+            with caplog.at_level(logging.WARNING):
+                result = Scanner.scan(root)
+
+        assert "good.txt" in result
+        assert "bad.txt" not in result
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1

@@ -1,8 +1,11 @@
 """Walk a directory tree and produce a {relpath: hash} mapping."""
 
 import os
+import logging
 
 from .hashing import hash_file
+
+logger = logging.getLogger(__name__)
 
 SKIP_NAMES = {
     # VCS / tooling
@@ -38,7 +41,8 @@ class Scanner:
                 full = os.path.join(dirpath, fname)
                 try:
                     digest = hash_file(full)
-                except (OSError, PermissionError):
+                except (OSError, PermissionError) as exc:
+                    logger.warning("Skipping unreadable file: %s (%s)", full, exc)
                     continue
 
                 rel = os.path.relpath(full, directory)

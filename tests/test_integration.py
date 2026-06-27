@@ -134,3 +134,143 @@ class TestFullWorkflow:
         tgt_files = Scanner.scan(tgt)
         verify = Differ.compare(src_files, tgt_files)
         assert verify.total_changes > 0
+
+
+import json
+import os
+import pytest
+from distbackup.core.scanner import Scanner
+from distbackup.core.snapshot_manager import SnapshotManager
+from distbackup.core.differ import Differ
+from distbackup.core.syncer import Syncer
+
+
+import json
+import os
+import pytest
+from distbackup.core.scanner import Scanner
+from distbackup.core.snapshot_manager import SnapshotManager
+from distbackup.core.differ import Differ
+from distbackup.core.syncer import Syncer
+
+
+class TestSecurityProtection:
+    """Integration tests for the three security fixes."""
+
+    def test_root_mismatch_blocks_sync(self, sample_tree, tmp_path):
+        """validate_root raises when snapshot root does not match directory."""
+        src = str(sample_tree)
+        tgt = str(tmp_path / "target")
+        os.makedirs(tgt, exist_ok=True)
+
+        src_mgr = SnapshotManager(src)
+        src_files = Scanner.scan(src)
+        src_mgr.save("src_snap", src_files, src)
+
+        # Save a target snapshot normally, then tamper its root
+        tgt_mgr = SnapshotManager(tgt)
+        tgt_mgr.save("tgt_snap", {}, tgt)
+
+        # Tamper: change the root in the JSON to point to a different directory
+        snap_path = os.path.join(tgt, ".backup", "snapshots", "tgt_snap.json")
+        with open(snap_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data["root"] = str(tmp_path / "some_other_dir")
+        with open(snap_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+        with pytest.raises(ValueError, match="root mismatch"):
+            tgt_mgr.validate_root("tgt_snap", tgt)
+
+    def test_path_traversal_snapshot_is_blocked(self, sample_tree, tmp_path):
+        """A tampered snapshot with traversal paths is blocked during sync."""
+        src = str(sample_tree)
+        tgt = str(tmp_path / "target")
+        os.makedirs(tgt, exist_ok=True)
+
+        src_files = Scanner.scan(src)
+        tgt_files = Scanner.scan(tgt)
+
+        # Build a DiffResult manually with a traversal path in added
+        diff = Differ.compare(src_files, tgt_files)
+        diff.added.append(os.path.join("..", "..", "..", "evil.dll"))
+
+        syncer = Syncer()
+        stats = syncer.sync(src, tgt, diff)
+        assert stats["errors"] >= 1
+        assert any("path traversal blocked" in err for _, err in stats["failed"])
+
+    def test_root_mismatch_detected_before_copy(self, sample_tree, tmp_path):
+        """Root mismatch is caught before any files are copied."""
+        src = str(sample_tree)
+        tgt = str(tmp_path / "target")
+        os.makedirs(tgt, exist_ok=True)
+
+        src_mgr = SnapshotManager(src)
+        src_files = Scanner.scan(src)
+        src_mgr.save("src_snap", src_files, src)
+        src_mgr.set_repo_type("Source")
+
+        # Save a snapshot and tamper its root
+        tgt_mgr = SnapshotManager(tgt)
+        tgt_mgr.save("tgt_snap", {"dummy": "hash"}, tgt)
+        tgt_mgr.set_repo_type("Target")
+
+        # Tamper root
+        snap_path = os.path.join(tgt, ".backup", "snapshots", "tgt_snap.json")
+        with open(snap_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data["root"] = str(tmp_path / "wrong_dir")
+        with open(snap_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+        with pytest.raises(ValueError, match="root mismatch"):
+            tgt_mgr.validate_root("tgt_snap", tgt)
+
+    def test_scanner_logs_unreadable_in_workflow(self, sample_tree, tmp_path, caplog):
+        """Full workflow: scanner logs unreadable instead of silently skipping."""
+        import logging
+        from unittest.mock import patch
+        from distbackup.core.hashing import hash_file as orig_hash
+
+        src = str(sample_tree)
+
+        bad_path = os.path.join(src, "docs", "readme.md")
+
+        def mock_hash(path, *args, **kwargs):
+            if os.path.abspath(path) == os.path.abspath(bad_path):
+                raise PermissionError("Permission denied during test")
+            return orig_hash(path, *args, **kwargs)
+
+        with patch("distbackup.core.scanner.hash_file", side_effect=mock_hash):
+            with caplog.at_level(logging.WARNING):
+                result = Scanner.scan(src)
+
+        assert os.path.join("docs", "readme.md") not in result
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) >= 1
+        assert any("readme.md" in str(r.message) for r in warnings)
+
+    def test_tampered_json_with_traversal_full_flow(self, sample_tree, tmp_path):
+        """End-to-end: a tampered snapshot JSON with traversal paths."""
+        src = str(sample_tree)
+        tgt = str(tmp_path / "target")
+        os.makedirs(tgt, exist_ok=True)
+
+        src_mgr = SnapshotManager(src)
+        src_files = Scanner.scan(src)
+        src_mgr.save("src_snap", src_files, src)
+
+        tgt_mgr = SnapshotManager(tgt)
+        tgt_files = Scanner.scan(tgt)
+        # Tamper: add traversal path to source snapshot so it appears as "added"
+        src_files[os.path.join("..", "..", "hack.dll")] = "fakehash"
+        src_mgr.save("src_snap", src_files, src)
+        tgt_mgr.save("tgt_snap", tgt_files, tgt)
+
+        diff = Differ.compare(src_files, tgt_files)
+
+        syncer = Syncer()
+        stats = syncer.sync(src, tgt, diff)
+        # The traversal file should be in "added" and blocked
+        assert stats["errors"] >= 1

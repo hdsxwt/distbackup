@@ -121,6 +121,22 @@ class SnapshotManager:
                 f"Snapshot '{name}' is corrupted (invalid JSON): {exc}"
             ) from exc
 
+    def validate_root(self, name: str, expected_directory: str) -> None:
+        """Raise ValueError if the snapshot root does not match *expected_directory*.
+
+        This prevents using a snapshot from one directory with another
+        directory during sync / diff operations.
+        """
+        snap = self.load(name)
+        snap_root = os.path.abspath(snap.get("root", ""))
+        expected = os.path.abspath(expected_directory)
+        if snap_root != expected:
+            raise ValueError(
+                f"Snapshot '{name}' root mismatch: "
+                f"snapshot was created for '{snap_root}' "
+                f"but expected '{expected}'"
+            )
+
     def list_snapshots(self) -> list[str]:
         """Return names of all saved snapshots (without .json extension)."""
         names = []
