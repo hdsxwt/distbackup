@@ -3,6 +3,7 @@
 import argparse
 import os
 import sys
+from datetime import datetime
 
 from distbackup.core import (Scanner, SnapshotManager, Differ, Syncer)
 
@@ -82,6 +83,24 @@ def cmd_sync(args):
         print(msg)
         for relpath, err in stats["failed"]:
             print(f"  FAILED: {relpath}  ({err})")
+
+        # --- post-backup verification ---
+        print()
+        print("Verifying target ...")
+        tgt_now = Scanner.scan(args.target)
+        verify = Differ.compare(snap_src["files"], tgt_now)
+        if verify.total_changes == 0:
+            print("Verification passed -- target matches source.")
+        else:
+            print(f"Verification found {verify.total_changes} remaining difference(s):")
+            for p in verify.added:
+                print(f"  + {p}")
+            for p in verify.modified:
+                print(f"  ~ {p}")
+        # Save the fresh scan as a new target snapshot (timestamped)
+        verify_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+        tgt_mgr.save(verify_name, tgt_now, args.target)
+        print(f"Verification snapshot saved as '{verify_name}'")
 
 
 def cmd_list(args):

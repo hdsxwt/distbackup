@@ -459,16 +459,28 @@ class BackupGUI:
         self._set_buttons_state(tk.DISABLED)
         self.progress["maximum"] = self._diff_result.total_changes
         self.progress["value"] = 0
+        source_files_copy = dict(self._source_files)
+        diff_copy = self._diff_result
+        self._diff_result = None
 
         def progress_cb(cur, total):
             self.root.after(0, lambda: self._update_progress(cur, total))
 
-        syncer = Syncer(progress_callback=progress_cb)
+        syncer = Syncer(progress_callback=progress_cb, dry_run=False)
 
         def worker():
             try:
-                stats = syncer.sync(src, tgt, self._diff_result)
+                stats = syncer.sync(src, tgt, diff_copy)
                 self.root.after(0, lambda: self._on_backup_done(stats))
+
+                # --- post-backup verification ---
+                self.root.after(0, lambda: self._log("Verifying target ..."))
+                tgt_now = Scanner.scan(tgt)
+                verify = Differ.compare(source_files_copy, tgt_now)
+                # Save fresh scan as timestamped snapshot
+                verify_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+                tgt_mgr.save(verify_name, tgt_now, tgt)
+                self.root.after(0, lambda vn=verify_name: self._on_verify_done(verify, tgt, vn))
             except Exception as e:
                 self.root.after(0, lambda: self._on_backup_error(str(e)))
 
@@ -480,9 +492,6 @@ class BackupGUI:
         self._log(f"Copying... {cur}/{total} ({pct}%)")
 
     def _on_backup_done(self, stats: dict):
-        self.progress["value"] = 0
-        self._set_buttons_state(tk.NORMAL)
-
         msg_parts = [f"Backup complete: {stats['copied']} copied"]
         if stats["errors"]:
             msg_parts.append(f"{stats['errors']} errors")
@@ -498,8 +507,52 @@ class BackupGUI:
             )
         else:
             messagebox.showinfo("Backup Done", f"Successfully copied {stats['copied']} files.")
+
+    def _on_verify_done(self, verify, tgt_dir: str, verify_name: str):
+        """Handle post-backup verification result."""
+        self.progress["value"] = 0
+        self._set_buttons_state(tk.NORMAL)
         self._diff_result = None
         self.btn_backup.configure(state=tk.DISABLED)
+
+        if verify.total_changes == 0:
+            self._log("Verification passed -- target matches source.")
+            self._populate_verify_tree(
+                verify.added, verify.modified, verify.removed, verify.unchanged,
+            )
+        else:
+            self._log(
+                f"Verification found {verify.total_changes} remaining difference(s): "
+                f"{len(verify.added)} added, {len(verify.modified)} modified"
+            )
+            self._populate_verify_tree(
+                verify.added, verify.modified, verify.removed, verify.unchanged,
+                failed=True,
+            )
+        # Refresh target state from the verification snapshot (named with timestamp)
+        try:
+            mgr = SnapshotManager(tgt_dir)
+            snap = mgr.load(verify_name)
+            self._target_files = snap["files"]
+            self._target_scanned = True
+            self._auto_load_latest("target")
+        except Exception:
+            pass
+
+    def _populate_verify_tree(self, added, modified, removed, unchanged, failed=False):
+        """Populate diff tree with verification results."""
+        for item in self.diff_tree.get_children():
+            self.diff_tree.delete(item)
+        label = "!! FAILED" if failed else "OK"
+        for p in added:
+            self.diff_tree.insert("", tk.END, values=(f"+ {label}", p))
+        for p in modified:
+            self.diff_tree.insert("", tk.END, values=(f"~ {label}", p))
+        for p in removed:
+            self.diff_tree.insert("", tk.END, values=("- OK", p))
+        n = len(unchanged)
+        if n:
+            self.diff_tree.insert("", tk.END, values=(f"= {n} OK", ""))
 
     def _on_backup_error(self, msg: str):
         self._log(f"ERROR: {msg}")
