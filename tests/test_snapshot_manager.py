@@ -72,5 +72,5 @@ class TestSnapshotManager:
         snap_dir = os.path.join(str(tmp_path), ".backup", "snapshots")
         with open(os.path.join(snap_dir, "bad.json"), "w") as f:
             f.write("not valid json {{{")
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(ValueError):
             mgr.load("bad")

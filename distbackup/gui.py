@@ -21,6 +21,8 @@ class BackupGUI:
         self._target_files: dict[str, str] = {}
         self._source_scanned: bool = False
         self._target_scanned: bool = False
+        self._source_type_var = tk.StringVar(value="?")
+        self._target_type_var = tk.StringVar(value="?")
 
         self._build_ui()
 
@@ -44,6 +46,14 @@ class BackupGUI:
             folder_frame, text="Scan", command=self._scan_source
         )
         self.btn_scan_src.grid(row=0, column=3, padx=2)
+        ttk.Label(folder_frame, text="Type:").grid(row=0, column=4, padx=(8, 2), sticky=tk.W)
+        ttk.Label(folder_frame, textvariable=self._source_type_var,
+                  foreground="blue").grid(row=0, column=5, padx=2, sticky=tk.W)
+        self.btn_toggle_src = ttk.Button(
+            folder_frame, text="Toggle", command=self._toggle_source_type, width=8
+        )
+        self.btn_toggle_src.grid(row=0, column=6, padx=2)
+        self.btn_toggle_src.configure(state=tk.DISABLED)
 
         # Target row
         ttk.Label(folder_frame, text="Target:").grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
@@ -56,6 +66,14 @@ class BackupGUI:
             folder_frame, text="Scan", command=self._scan_target
         )
         self.btn_scan_tgt.grid(row=1, column=3, padx=2, pady=(4, 0))
+        ttk.Label(folder_frame, text="Type:").grid(row=1, column=4, padx=(8, 2), pady=(4, 0), sticky=tk.W)
+        ttk.Label(folder_frame, textvariable=self._target_type_var,
+                  foreground="green").grid(row=1, column=5, padx=2, pady=(4, 0), sticky=tk.W)
+        self.btn_toggle_tgt = ttk.Button(
+            folder_frame, text="Toggle", command=self._toggle_target_type, width=8
+        )
+        self.btn_toggle_tgt.grid(row=1, column=6, padx=2, pady=(4, 0))
+        self.btn_toggle_tgt.configure(state=tk.DISABLED)
 
         folder_frame.columnconfigure(1, weight=1)
 
@@ -144,6 +162,7 @@ class BackupGUI:
         if path:
             self.src_entry.delete(0, tk.END)
             self.src_entry.insert(0, path)
+            self._refresh_type_display("source")
             self._auto_load_latest("source")
 
     def _browse_target(self):
@@ -151,6 +170,7 @@ class BackupGUI:
         if path:
             self.tgt_entry.delete(0, tk.END)
             self.tgt_entry.insert(0, path)
+            self._refresh_type_display("target")
             self._auto_load_latest("target")
 
     # ------------------------------------------------------------------
@@ -254,6 +274,7 @@ class BackupGUI:
         self._log(f"{side.capitalize()} scan complete: {count} files, saved as '{ts_name}'")
         self._set_buttons_state(tk.NORMAL)
         self._auto_load_latest(side)
+        self._refresh_type_display(side)
 
     def _on_scan_error(self, msg: str):
         self._log(f"ERROR: {msg}")
@@ -279,6 +300,7 @@ class BackupGUI:
             return
         self._source_files = snap["files"]
         self._mark_combo("source", name)
+        self._refresh_type_display("source")
         self._log(f"Loaded source snapshot '{name}': {len(snap['files'])} files ({snap['created']})")
 
     def _on_tgt_combo_select(self, event):
@@ -296,6 +318,7 @@ class BackupGUI:
             return
         self._target_files = snap["files"]
         self._mark_combo("target", name)
+        self._refresh_type_display("target")
         self._log(f"Loaded target snapshot '{name}': {len(snap['files'])} files ({snap['created']})")
     def _mark_combo(self, side: str, name: str):
         """Set combo display, adding (new) only if this is the latest snapshot."""
@@ -399,6 +422,17 @@ class BackupGUI:
         if not self._diff_result or self._diff_result.total_changes == 0:
             return
 
+        # --- enforce target repo type ---
+        tgt_mgr = SnapshotManager(tgt)
+        if tgt_mgr.get_repo_type() == "Source":
+            messagebox.showerror(
+                "Blocked",
+                "Target directory is marked as 'Source' and cannot receive writes.\n\n"
+                "Use the Toggle button or CLI to change it to 'Target' first."
+            )
+            self._log("Backup blocked: target is Source type.")
+            return
+
         # Pre-backup safety checks
         warnings = []
         if not self._source_scanned:
@@ -448,12 +482,20 @@ class BackupGUI:
     def _on_backup_done(self, stats: dict):
         self.progress["value"] = 0
         self._set_buttons_state(tk.NORMAL)
-        self._log(
-            f"Backup complete: {stats['copied']} copied, "
-            f"{stats['errors']} errors"
-        )
+
+        msg_parts = [f"Backup complete: {stats['copied']} copied"]
         if stats["errors"]:
-            messagebox.showwarning("Backup Done", f"{stats['copied']} copied, {stats['errors']} errors.")
+            msg_parts.append(f"{stats['errors']} errors")
+        self._log(", ".join(msg_parts))
+
+        for relpath, err in stats.get("failed", []):
+            self._log(f"  FAILED: {relpath}  ({err})")
+
+        if stats["errors"]:
+            messagebox.showwarning(
+                "Backup Done",
+                f"{stats['copied']} copied, {stats['errors']} errors."
+            )
         else:
             messagebox.showinfo("Backup Done", f"Successfully copied {stats['copied']} files.")
         self._diff_result = None
@@ -481,11 +523,67 @@ class BackupGUI:
             self.btn_scan_tgt,
             self.btn_compare,
             self.btn_backup,
+            self.btn_toggle_src,
+            self.btn_toggle_tgt,
         ]:
             try:
                 btn.configure(state=state)
             except tk.TclError:
                 pass
+
+    # ------------------------------------------------------------------
+    # Repo type toggle
+    # ------------------------------------------------------------------
+
+    def _refresh_type_display(self, side: str):
+        """Read the repo type from .backup/config.json and update display."""
+        entry = self.src_entry if side == "source" else self.tgt_entry
+        var = self._source_type_var if side == "source" else self._target_type_var
+        btn = self.btn_toggle_src if side == "source" else self.btn_toggle_tgt
+
+        directory = entry.get().strip()
+        if not directory or not os.path.isdir(directory):
+            var.set("?")
+            btn.configure(state=tk.DISABLED)
+            return
+
+        try:
+            mgr = SnapshotManager(directory)
+            var.set(mgr.get_repo_type())
+            btn.configure(state=tk.NORMAL)
+        except Exception:
+            var.set("?")
+            btn.configure(state=tk.DISABLED)
+
+    def _toggle_source_type(self):
+        self._toggle_type("source")
+
+    def _toggle_target_type(self):
+        self._toggle_type("target")
+
+    def _toggle_type(self, side: str):
+        entry = self.src_entry if side == "source" else self.tgt_entry
+        directory = entry.get().strip()
+        if not directory:
+            return
+
+        mgr = SnapshotManager(directory)
+        current = mgr.get_repo_type()
+        new_type = "Target" if current == "Source" else "Source"
+
+        # Source -> Target is a safety-critical transition: confirm.
+        if current == "Source" and new_type == "Target":
+            if not messagebox.askyesno(
+                "Confirm",
+                f"Change {side} from Source to Target?\n\n"
+                "A Target directory can receive writes (sync into it).\n"
+                "This means its files could be overwritten by a future backup."
+            ):
+                return
+
+        mgr.set_repo_type(new_type)
+        self._refresh_type_display(side)
+        self._log(f"{side.capitalize()} type changed: {current} -> {new_type}")
 
     # ------------------------------------------------------------------
     # Entry point

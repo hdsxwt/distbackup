@@ -4,7 +4,19 @@ import os
 
 from .hashing import hash_file
 
-SKIP_NAMES = {".backup", ".git", "__pycache__", ".DS_Store", "Thumbs.db"}
+SKIP_NAMES = {
+    # VCS / tooling
+    ".backup", ".git", ".svn", ".hg",
+    # Python
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".tox", ".venv", "venv",
+    # Node / JS
+    "node_modules",
+    # IDE / OS
+    ".idea", ".vscode", ".DS_Store", "Thumbs.db",
+    # Rust / Go / misc
+    "target", "vendor",
+}
 
 
 class Scanner:
