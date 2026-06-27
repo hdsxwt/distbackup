@@ -397,3 +397,43 @@ class TestSecurityProtection:
         stats = syncer.sync(src, tgt, diff)
         # The traversal file should be in "added" and blocked
         assert stats["errors"] >= 1
+
+
+class TestEmptyTargetBackup:
+    """Regression: backing up to an empty target folder must not fail."""
+
+    def test_sync_to_empty_target_works(self, sample_tree, tmp_path):
+        """All snapshots in source store, target is an empty directory."""
+        import subprocess, sys, json
+
+        src = str(sample_tree)
+        tgt = str(tmp_path / "target")
+        os.makedirs(tgt, exist_ok=True)
+
+        mgr = SnapshotManager(src)
+        src_files = Scanner.scan(src)
+        mgr.save("src_snap", src_files, src)
+        # Simulate a target scan with empty results, saved into source store
+        mgr.save("tgt_snap", {}, tgt)
+
+        # Run the sync programmatically (same as CLI would do)
+        from distbackup.cli import cmd_sync
+        import argparse
+
+        class Args:
+            pass
+
+        a = Args()
+        a.source = src
+        a.target = tgt
+        a.source_snap = "src_snap"
+        a.target_snap = "tgt_snap"
+        a.store = src
+        a.force = True
+        a.dry_run = False
+
+        cmd_sync(a)
+
+        # After sync, all source files should be in target
+        for rel in src_files:
+            assert os.path.isfile(os.path.join(tgt, rel)), f"Missing: {rel}"

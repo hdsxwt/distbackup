@@ -41,10 +41,11 @@ def cmd_sync(args):
     snap_src = mgr.load(args.source_snap)
     snap_tgt = mgr.load(args.target_snap)
 
+    tgt_mgr = SnapshotManager(args.target)
+
     # -- validate snapshot roots match directories --
     mgr.validate_root(args.source_snap, args.source)
-    tgt_mgr = SnapshotManager(args.target)
-    tgt_mgr.validate_root(args.target_snap, args.target)
+    mgr.validate_root(args.target_snap, args.target)
 
     # -- enforce target repo type --
     if tgt_mgr.get_repo_type() == "Source":
