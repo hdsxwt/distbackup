@@ -1,64 +1,81 @@
-## Features
+# Features
 
-### Scanning & Hashing
-- Recursive directory walk with SHA256 content-addressed hashing (64 KB chunk streaming).
-- Produces a `{relpath: sha256_hexdigest}` mapping for every file under the root.
-- Automatically skips common VCS, tooling, and OS directories: `.backup`, `.git`, `.svn`, `.hg`, `__pycache__`, `.venv`, `venv`, `node_modules`, `.idea`, `.vscode`, `target`, `vendor`, and more.
-- Gracefully logs and skips unreadable files instead of aborting the scan.
+## Repository identity
 
-### Versioned Snapshots
-- Timestamp-named JSON snapshots (`20260627_113025.json`) stored under `.backup/snapshots/`.
-- Atomic writes via temp file + `os.replace` -- a crash cannot leave a truncated snapshot.
-- Each snapshot records the scan timestamp (UTC ISO), scanned root absolute path, and the full file-to-hash mapping.
-- Snapshot root validation prevents using a snapshot from one directory with another.
+Each repository tracked by distbackup can carry a unique identity code
+(`repo_id`) in its `.backup/config.json`. This code represents the
+repository lineage and is used to prevent accidentally mixing files from
+unrelated source directories into the same backup target.
 
-### Diff Engine
-- Static comparison of two `{path: hash}` maps produces four categories: added, modified, removed, unchanged.
-- Lightweight `DiffResult` dataclass with a `total_changes` convenience property.
+### Identity lifecycle
 
-### One-Way Sync (Source to Target)
-- Copies only added and modified files from source to target -- files that exist only on the target are untouched.
-- Path-traversal guard: every destination path is verified to resolve inside the target directory.
-- `--dry-run` mode previews what would be copied without writing anything.
-- Per-file error tracking reports failures without aborting the remaining copies.
-- Interactive confirmation before copying (skip with `--force`).
+| Event | Behavior |
+|-------|----------|
+| New repository created (Target) | No `repo_id` assigned |
+| `set_repo_type("Source")` | UUIDv4 generated and persisted |
+| Source scanned / loaded | `repo_id` already present |
+| First backup to a Target | Target inherits source's `repo_id` |
+| Subsequent backup (same lineage) | Allowed - `repo_id`s match |
+| Backup from different source | **Rejected** - `repo_id`s differ |
 
-### Post-Backup Verification
-- Automatically re-scans the target directory after every sync.
-- Compares the fresh target scan against the source snapshot to confirm correctness.
-- Saves the verification result as a new timestamped target snapshot.
+### Rationale
 
-### Repository Type Protection
-- Each directory carries a type in `.backup/config.json`: `Source` or `Target` (default).
-- A `Source` directory is write-protected -- sync operations refuse to write into it.
-- Toggling from `Source` to `Target` prompts a confirmation dialog in the GUI.
-- Type is inspectable and settable from both CLI and GUI.
+Without lineage enforcement, it is easy to accidentally back up two
+unrelated source trees into the same target directory, creating an
+incoherent mess of files from different origins. The `repo_id` mechanism
+ensures each backup target stays bound to a single source lineage.
 
-### Storage Layout
-- All metadata lives under a hidden `.backup/` directory (automatically hidden via `SetFileAttributesW` on Windows).
-- `.backup/config.json` holds the repository type.
-- `.backup/snapshots/` holds timestamp-named JSON snapshot files.
+---
 
-### CLI
-- `scan <dir> <name>` -- hash a directory and save a snapshot.
-- `diff <src_snap> <tgt_snap>` -- compare two snapshots with human-readable output.
-- `sync <src> <tgt> <src_snap> <tgt_snap>` -- copy changed files with `--dry-run` and `--force` options.
-- `list` -- enumerate all snapshots with file counts and timestamps.
-- `type <dir> [Source|Target]` -- read or set the repository type.
+## Security protections
 
-### GUI (tkinter)
-- Browse-to-select source and target folders with automatic latest-snapshot loading.
-- Read-only snapshot combo boxes with `(new)` marker on the latest entry.
-- Side-by-side scan buttons that run in background threads with progress feedback.
-- One-click Compare populating a tree view of added, modified, and removed files.
-- Pre-backup safety checks: stale-snapshot warnings, unscanned-folder warnings, and an optional confirmation dialog.
-- Post-backup verification results rendered in the same diff tree with OK / FAILED markers.
-- Toggle button to switch repository type with confirmation on safety-critical transitions.
-- Keyboard shortcuts: `Ctrl+O` browse source, `Ctrl+Shift+O` browse target, `Ctrl+R` refresh snapshots, `Ctrl+W` / `Ctrl+Q` quit.
+### Path traversal blocking
 
-### Test Suite
-- 107 tests covering hashing, scanning, diffing, sync logic, snapshot management, CLI commands, GUI static structure, GUI logic methods, and end-to-end integration.
-- Uses isolated `tmp_path` fixtures; no tests touch real user directories.
+Before copying any file, the sync engine validates that the resolved
+destination path stays within the target directory. Tampered snapshot JSON
+files containing `..` escape sequences are detected and blocked.
 
-### Dependencies
-- Python 3.10+ standard library only: `hashlib`, `os`, `shutil`, `json`, `tkinter`, `argparse`, `tempfile`, `ctypes`, `threading`, `dataclasses`.
+Blocked traversals are recorded in the sync stats with the message
+`"path traversal blocked"` and logged as warnings.
+
+### Snapshot root validation
+
+Each snapshot records its origin directory in the `root` field. Before a
+sync, both the source and target snapshots are validated to ensure they
+were created for the directories currently being operated on. A mismatch
+raises a `ValueError` with a descriptive message.
+
+### Scanner transparency
+
+The scanner previously skipped unreadable files silently. Now, any file
+that fails to hash due to `OSError` or `PermissionError` is logged as a
+warning:
+
+```
+WARNING  distbackup.core.scanner: Skipping unreadable file: C:\...\locked.txt (Permission denied)
+```
+
+This makes it clear which files were omitted from a scan and why.
+
+### Source write protection
+
+Directories marked as `"Source"` in their `config.json` reject all incoming
+sync writes. This is enforced before any files are copied, both in the CLI
+and GUI flows.
+
+### Lineage enforcement
+
+See [Repository identity](#repository-identity) above.
+
+---
+
+## Snapshot management
+
+Snapshots are stored as timestamp-named JSON files under `.backup/snapshots/`.
+Each write uses a temporary file + `os.replace()` for atomicity - a crash
+during snapshot creation cannot leave a truncated JSON file behind.
+
+The `SnapshotManager` API also provides:
+- `list_snapshots()` - sorted list of all snapshot names
+- `validate_root(name, directory)` - assert that a snapshot was created for the expected directory
+- `get_repo_id()` / `ensure_repo_id()` / `set_repo_id()` - identity code management
