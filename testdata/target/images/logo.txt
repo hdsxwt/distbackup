@@ -1,0 +1,5 @@
+﻿[pretend this is a binary image]
+width=256
+height=256
+format=png
+data=AAAAAA==

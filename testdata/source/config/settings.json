@@ -1,0 +1,9 @@
+﻿{
+  "version": "1.0",
+  "backup_root": "D:\\backups",
+  "exclude_patterns": [
+    "*.tmp",
+    "*.log",
+    "node_modules"
+  ]
+}
